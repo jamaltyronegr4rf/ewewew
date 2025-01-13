@@ -1,3 +1,87 @@
+-- Ensure the LPH-related functions are properly defined if not already
+if not LPHOBFUSCATED then
+    getfenv().LPH_NO_VIRTUALIZE = function(func) return func end
+    getfenv().LPH_JIT_MAX = function(func) return func end
+end
+
+LPH_JIT_MAX(function()
+    local Hooks, Targets, Whitelisted = {}, {}, {
+        {655, 775, 724, 633, 891},
+        {760, 760, 771, 665, 898},
+        {660, 759, 751, 863, 771},
+    }
+
+    -- Function to compare the equality of two tables
+    local function AreTablesEqual(a, b)
+        if #a ~= #b then return false end
+        for i, v in ipairs(a) do
+            if b[i] ~= v then return false end
+        end
+        return true
+    end
+
+    LPH_NO_VIRTUALIZE(function()
+        -- Scan garbage collected objects for target functions and metatables
+        for _, obj in ipairs(getgc(true)) do
+            if type(obj) == "function" then
+                local scriptSource, lineNumber = debug.info(obj, "sl")
+                if scriptSource:find("PlayerModule.LocalScript") and table.find({42, 51, 61}, lineNumber) then
+                    table.insert(Targets, obj)
+                end
+            elseif type(obj) == "table" and rawlen(obj) == 19 and getrawmetatable(obj) then
+                Targets.call = rawget(getrawmetatable(obj), "__call")
+            end
+        end
+    end)()
+
+    -- Validate that all necessary targets are found
+    if not (Targets[1] and Targets[2] and Targets[3] and Targets.call) then
+        warn("Bypass initialization failed")
+        return
+    end
+
+    local scriptIdentifier = debug.info(Targets[1], "s")
+
+    -- Hook the debug.info function to return the spoofed script path
+    Hooks.debug_info = hookfunction(debug.info, LPH_NO_VIRTUALIZE(function(...)
+        local args = {...}
+        if not checkcaller() and AreTablesEqual(args, {2, "s"}) then
+            return scriptIdentifier
+        end
+        return Hooks.debug_info(...)
+    end))
+
+    -- Neutralize the identified functions by hooking them to empty functions
+    for i = 1, 3 do
+        hookfunction(Targets[i], LPH_NO_VIRTUALIZE(function() end))
+    end
+
+    -- Hook the call metamethod to allow only whitelisted calls
+    Hooks.call = hookfunction(Targets.call, LPH_NO_VIRTUALIZE(function(self, ...)
+        local callArgs = {...}
+        for _, whitelist in ipairs(Whitelisted) do
+            if AreTablesEqual(whitelist, callArgs) then
+                return Hooks.call(self, ...)
+            end
+        end
+    end))
+
+    task.wait(3)
+end)()
+
+
+local ErrorScript = game:GetService("ReplicatedFirst"):FindFirstChild("LocalScript")
+
+if ErrorScript then
+    ErrorScript:Destroy()
+end
+
+loadstring([[
+    function LPH_NO_VIRTUALIZE(f) return f end;
+]])();
+
+
+
 local lib = {}
 
 function lib:YunaRemake(title)
